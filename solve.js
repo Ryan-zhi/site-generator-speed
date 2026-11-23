@@ -108,11 +108,13 @@ function isWSCode(c) {
     c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff;
 }
 
-function wordsOf(text) {
+// The words of one line. A line boundary is whitespace, so the count of a
+// whole body is the sum of its lines' counts.
+function countLineWords(line) {
   let n = 0;
   let inWord = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charCodeAt(i);
     const ws = c < 128 ? WS_ASCII[c] === 1 : (c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
       c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff);
     if (ws) inWord = false;
@@ -552,18 +554,27 @@ function inlineToString(s, env) {
   return out.join('');
 }
 
-// Render one body's Markdown: { html, toc, excerpt }. Inline content is written
-// straight into the single html array; a string is built only where one is
-// needed (the first paragraph's excerpt, a level 2/3 heading's toc entry).
+// Render one body's Markdown: { html, toc, excerpt, words }. Inline content is
+// written straight into the single html array; a string is built only where one
+// is needed (the first paragraph's excerpt, a level 2/3 heading's toc entry).
+// The word count is taken while the lines are consumed: the block-start line
+// is counted at the top of the loop, and every line an inner loop consumes
+// after the first is counted there — so each line is counted exactly once and
+// the sum equals wordsOf(src). In particular the blockquote and list inner
+// loops skip their first line (it is the block-start line, already counted),
+// while the fence-body and paragraph-continuation loops count every line
+// they consume.
 function renderMarkdown(src, env) {
   const lines = src.split('\n');
   const ids = new Set();
   const html = [];
   const toc = [];
   let excerpt = null;
+  let words = 0;
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
+    words += countLineWords(line);
     const c0 = line.charCodeAt(0);
     // Blank: empty, or (rarely) only spaces/tabs.
     if (line === '' || c0 === 32 || c0 === 9) {
@@ -575,7 +586,8 @@ function renderMarkdown(src, env) {
       if (lang !== null) {
         const body = [];
         i++;
-        while (i < lines.length && !fenceClose(lines[i])) body.push(lines[i++]);
+        while (i < lines.length && !fenceClose(lines[i])) { words += countLineWords(lines[i]); body.push(lines[i++]); }
+        if (i < lines.length) words += countLineWords(lines[i]); // the closing fence line
         i++;
         const cls = lang === '' ? '' : ` class="language-${escapeHtml(lang)}"`;
         html.push(`<pre><code${cls}>`);
@@ -607,6 +619,7 @@ function renderMarkdown(src, env) {
     if (c0 === 62) { // > blockquote
       const body = [];
       while (i < lines.length && lines[i].charCodeAt(0) === 62) {
+        if (body.length > 0) words += countLineWords(lines[i]); // the first line was counted at the top
         const l = lines[i++];
         body.push(l.length > 1 && l.charCodeAt(1) === 32 ? l.slice(2) : l.slice(1));
       }
@@ -635,6 +648,7 @@ function renderMarkdown(src, env) {
           const m = orderedOf(lines[i]);
           if (m !== null) {
             if (items.length === 0) start = Number(m.num);
+            if (items.length > 0) words += countLineWords(lines[i]); // the first item was counted at the top
             items.push([trimLine(m.text)]);
             i++;
             continue;
@@ -642,12 +656,14 @@ function renderMarkdown(src, env) {
         } else {
           const t = bulletOf(lines[i]);
           if (t !== null) {
+            if (items.length > 0) words += countLineWords(lines[i]); // the first item was counted at the top
             items.push([trimLine(t)]);
             i++;
             continue;
           }
         }
         if (items.length > 0 && isContinued(lines[i])) {
+          words += countLineWords(lines[i]);
           items[items.length - 1].push(trimLine(lines[i]));
           i++;
         } else break;
@@ -666,7 +682,7 @@ function renderMarkdown(src, env) {
     }
     const body = [trimLine(line)];
     i++;
-    while (i < lines.length && !endsParagraph(lines[i])) body.push(trimLine(lines[i++]));
+    while (i < lines.length && !endsParagraph(lines[i])) { words += countLineWords(lines[i]); body.push(trimLine(lines[i++])); }
     const text = body.join('\n');
     if (excerpt === null) {
       const pHtml = inlineToString(text, env);
@@ -678,7 +694,7 @@ function renderMarkdown(src, env) {
       html.push('</p>\n');
     }
   }
-  return { html: html.join(''), toc, excerpt: excerpt ?? '' };
+  return { html: html.join(''), toc, excerpt: excerpt ?? '', words };
 }
 
 // ---------------------------------------------------------------- templates
@@ -1045,6 +1061,7 @@ export function build(input) {
     s.html = md.html;
     s.toc = md.toc;
     s.excerpt = md.excerpt;
+    s.words = md.words;
   }
 
   // 5. Collections.
@@ -1099,7 +1116,7 @@ export function build(input) {
     date_long: s.data.date === undefined ? '' : longDate(s.data.date),
     summary: s.data.summary ?? '',
     excerpt: s.excerpt,
-    reading_minutes: Math.max(1, Math.ceil(wordsOf(s.body) / 200)),
+    reading_minutes: Math.max(1, Math.ceil(s.words / 200)),
     tags: s.tagRefs.map((t) => ({ name: t.name, slug: t.slug, url: t.url })),
   });
   for (const p of posts) cards.set(p, cardOf(p));
