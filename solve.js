@@ -535,14 +535,14 @@ function inlineRange(s, from, to, env, out) {
   if (to > run) out.push(s.slice(run, to));
 }
 
-// A string with none of these holds no inline construct: its rendering is
-// just its HTML escaping. (Backslash, backtick, asterisk and [ are the only
-// characters that can start one; _ is always itself.)
-const MARK_RE = /[\\`*\[]/;
-
+// INL_RE's set is the union of the construct starters (\ ` * [) and the HTML
+// specials (& < > " '), so a string it does not match needs neither a
+// construct nor any escaping and can be pushed as-is. That is one regex test
+// instead of MARK_RE's test plus escapeHtml's own search.
 function inlineInto(s, env, out) {
-  if (!MARK_RE.test(s)) {
-    out.push(escapeHtml(s));
+  INL_RE.lastIndex = 0;
+  if (!INL_RE.test(s)) {
+    out.push(s);
     return;
   }
   inlineRange(s, 0, s.length, env, out);
