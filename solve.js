@@ -903,10 +903,17 @@ function compileTemplate(nodes) {
           const sv = `_s${uid++}`;
           const av = `_a${uid++}`;
           const iv = `_i${uid++}`;
+          const lv = `_l${uid++}`;
           out.push(`{ const ${av} = LK(${scopeVar},G[${gi}]);`);
           out.push(`if (Array.isArray(${av})) {`);
+          // One scope and one loop object for the whole loop, mutated per
+          // iteration: rendering is synchronous, so nothing can observe the
+          // previous iteration's values, and a nested for gets its own pair.
+          out.push(`const ${lv} = { index: 0, first: false, last: false, length: ${av}.length };`);
+          out.push(`const ${sv} = { vars: { ${JSON.stringify(n.name)}: undefined, loop: ${lv} }, parent: ${scopeVar} };`);
           out.push(`for (let ${iv} = 0; ${iv} < ${av}.length; ${iv}++) {`);
-          out.push(`const ${sv} = { vars: { ${JSON.stringify(n.name)}: ${av}[${iv}], loop: { index: ${iv} + 1, first: ${iv} === 0, last: ${iv} === ${av}.length - 1, length: ${av}.length } }, parent: ${scopeVar} };`);
+          out.push(`${sv}.vars[${JSON.stringify(n.name)}] = ${av}[${iv}];`);
+          out.push(`${lv}.index = ${iv} + 1; ${lv}.first = ${iv} === 0; ${lv}.last = ${iv} === ${av}.length - 1;`);
           gen(n.body, sv, out);
           out.push('} } }');
           break;
